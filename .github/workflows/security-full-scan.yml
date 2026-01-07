@@ -73,7 +73,7 @@ jobs:
             ghcr.io/gitleaks/gitleaks@sha256:105ac66a57b2bb8afb61a3b8a5dcc4817773d03724a7e8a515214cfe58225556 \
             detect \
               --source /repo \
-              --config /repo/.gitleaks.toml \
+              --config /repo/.github/config/gitleaks.toml \
               $NO_GIT_FLAG \
               --report-format json \
               --report-path /repo/gitleaks.json \
@@ -132,7 +132,7 @@ jobs:
             -e SEMGREP_TIMEOUT=300 \
             semgrep/semgrep@sha256:1f0850c540140c6da68811b21012fd26e91e5323daae245b0a71e70b72a89d2a \
             semgrep scan \
-              --config /src/semgrep.yaml \
+              --config /src/.github/config/semgrep.yaml \
               --sarif \
               --output /src/semgrep.sarif \
               /src
