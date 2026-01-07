@@ -4,15 +4,21 @@
 # Real credentials should NEVER be committed to this repository.
 #
 # Documentation: https://github.com/gitleaks/gitleaks#gitleaksignore
+#
+# NOTE: .gitleaksignore uses exact fingerprints from findings, NOT glob patterns.
+# Format: <file-path>:<rule-id>:<line-number>
+# To add new exclusions, run Gitleaks and copy the "Fingerprint:" from the finding.
 
-# Test data directories with mock credentials
-**/testdata/**/*.yaml
-**/testdata/**/*.yml
-**/testdata/**/*_mock.go
-**/testdata/**/*mock.go
-**/testdata/**/test-*.yaml
-**/testdata/**/test-*.yml
+# Kubernetes test secrets (base64-encoded test credentials in testdata)
+/repo/internal/controller/core/testdata/secrets/storageconfig-encoded-unmanaged.yaml:kubernetes-secret-yaml:2
+/repo/internal/controller/testdata/secrets/dataconnection-encoded.yaml:kubernetes-secret-yaml:2
+
+# Test private key in unit test
+/repo/internal/controller/core/pod_controller_test.go:private-key:314
+
+# Fake NVIDIA API key in mock
+/repo/internal/controller/testdata/nvidia_api_mock.go:generic-api-key:36
 
 # Note: This file should be reviewed regularly to ensure test data exclusions remain appropriate.
 # Production code and configuration files are still scanned for secrets.
-# Last updated: 2025-12-17
+# Last updated: 2026-01-07
