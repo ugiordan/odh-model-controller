@@ -1,10 +1,11 @@
-# Gitleaks path exclusions
+# Gitleaks path exclusions (glob patterns, one per line)
 # Automatically configured to skip test directories
 
-paths:
-  - testdata/
-  - tests/
-  - internal/controller/core/testdata/
-  - internal/controller/testdata/
-  - examples/
-  - vendor/
+testdata/
+tests/
+**/tests/**
+**/testdata/**
+internal/controller/core/testdata/
+internal/controller/testdata/
+examples/
+vendor/
