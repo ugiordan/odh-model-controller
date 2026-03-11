@@ -304,6 +304,8 @@ github.com/telepresenceio/telepresence/rpc/v2 v2.6.8 h1:q5V85LBT9bA/c4YPa/kMvJGy
 github.com/telepresenceio/telepresence/rpc/v2 v2.6.8/go.mod h1:VlgfRoXaW6Tl8IZbHmMWhITne8HY09/wOFtABHGj3ic=
 github.com/telepresenceio/watchable v0.0.0-20220726211108-9bb86f92afa7 h1:GMw3nEaOVyi+tNiGko5kAeRtoiEIpXNHmISyZ7fpw14=
 github.com/telepresenceio/watchable v0.0.0-20220726211108-9bb86f92afa7/go.mod h1:ihJ97e2gsd8GuzFF/I3B1qcik3XZLpXjumQifXi8Slg=
+github.com/ugiordan/operator-security-runtime v0.0.0-20260310161208-429f23ae0998 h1:7Rul/CEbHAwO5rrAm1lv5p3wQqGM1VZV4JHjdRxg+f4=
+github.com/ugiordan/operator-security-runtime v0.0.0-20260310161208-429f23ae0998/go.mod h1:q4S9xXE3HYCWGk/uaLvPwURF9zMKkmHyIC+cpLerS/U=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

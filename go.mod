@@ -15,6 +15,7 @@ require (
 	github.com/kubeflow/model-registry v0.2.19
 	github.com/onsi/ginkgo/v2 v2.23.4
 	github.com/onsi/gomega v1.37.0
+	github.com/opendatahub-io/operator-security-runtime v0.0.0-00010101000000-000000000000
 	github.com/openshift/api v0.0.0-20250102185430-d6d8306a24ec
 	github.com/openshift/client-go v0.0.0-20250102190827-c8a353937472
 	github.com/pkg/errors v0.9.1
@@ -31,7 +32,7 @@ require (
 	k8s.io/client-go v0.33.1
 	k8s.io/utils v0.0.0-20250321185631-1f6e0b77f77e
 	knative.dev/pkg v0.0.0-20250326102644-9f3e60a9244c
-	sigs.k8s.io/controller-runtime v0.20.4
+	sigs.k8s.io/controller-runtime v0.21.0
 	sigs.k8s.io/gateway-api v1.2.1
 	sigs.k8s.io/gateway-api-inference-extension v0.3.0
 	sigs.k8s.io/yaml v1.4.0
@@ -175,3 +176,5 @@ replace github.com/kserve/kserve => github.com/opendatahub-io/kserve v0.0.0-2026
 
 // CVE-2025-68156: Update expr-lang/expr to v1.17.7
 replace github.com/expr-lang/expr => github.com/expr-lang/expr v1.17.7
+
+replace github.com/opendatahub-io/operator-security-runtime => github.com/ugiordan/operator-security-runtime v0.0.0-20260310161208-429f23ae0998
