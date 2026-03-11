@@ -28,6 +28,7 @@ import (
 	kservev1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacscope"
 	routev1 "github.com/openshift/api/route/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -131,6 +132,30 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred())
 
+	// Create RBACScoper for integration testing
+	allowedRules, err := rbacscope.NewAllowedRules(
+		k8srbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"},
+			Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		k8srbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"configmaps"},
+			Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		k8srbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"services"},
+			Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		k8srbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"serviceaccounts"},
+			Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+	)
+	Expect(err).NotTo(HaveOccurred())
+	scoper, err := rbacscope.NewRBACScoper(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		rbacscope.OperatorIdentity{
+			Name:           "odh-model-controller",
+			ServiceAccount: "odh-model-controller",
+			Namespace:      "default",
+		},
+		allowedRules,
+	)
+	Expect(err).NotTo(HaveOccurred())
+
 	err = NewInferenceServiceReconciler(
 		ctrl.Log.WithName("setup"),
 		mgr.GetClient(),
@@ -139,12 +164,14 @@ var _ = BeforeSuite(func() {
 		true,
 		false,
 		"",
+		scoper,
 	).SetupWithManager(mgr, ctrl.Log.WithName("setup"))
 	Expect(err).NotTo(HaveOccurred())
 
 	err = (&ServingRuntimeReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Scoper: scoper,
 	}).SetupWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
