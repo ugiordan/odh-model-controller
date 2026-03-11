@@ -134,18 +134,31 @@ func (k *kserveAuthPolicyTemplateLoader) renderUserDefinedTemplate(ctx context.C
 		return nil, fmt.Errorf("failed to marshal audiences %v to JSON: %w", audiences, err)
 	}
 
+	// Get the objective expression from Gateway annotation or use default
+	objectiveExpression := constants.DefaultObjectiveExpression
+	gateway := &gatewayapiv1.Gateway{}
+	if err := controllerutils.GetResource(ctx, k.client, gatewayNamespace, gatewayName, gateway); err == nil {
+		if customExpr, ok := gateway.Annotations[constants.AuthPolicyObjectiveExpressionAnnotation]; ok && customExpr != "" {
+			objectiveExpression = customExpr
+		}
+	}
+
 	templateData := struct {
-		Name             string
-		GatewayName      string
-		GatewayNamespace string
-		Audiences        []string
-		AudiencesJSON    string
+		Name                string
+		GatewayName         string
+		GatewayNamespace    string
+		Audiences           []string
+		AudiencesJSON       string
+		Issuer              string
+		ObjectiveExpression string
 	}{
-		Name:             constants.GetGatewayAuthPolicyName(gatewayName),
-		GatewayName:      gatewayName,
-		GatewayNamespace: gatewayNamespace,
-		Audiences:        audiences,
-		AudiencesJSON:    string(audiencesJSON),
+		Name:                constants.GetGatewayAuthPolicyName(gatewayName),
+		GatewayName:         gatewayName,
+		GatewayNamespace:    gatewayNamespace,
+		Audiences:           audiences,
+		AudiencesJSON:       string(audiencesJSON),
+		Issuer:              audiences[0],
+		ObjectiveExpression: objectiveExpression,
 	}
 
 	var builder strings.Builder
@@ -358,24 +371,16 @@ func (k *kserveAuthPolicyMatcher) FindLLMServiceFromHTTPRouteAuthPolicy(authPoli
 }
 
 func (k *kserveAuthPolicyMatcher) FindLLMServiceFromGatewayAuthPolicy(ctx context.Context, authPolicy *kuadrantv1.AuthPolicy) ([]types.NamespacedName, error) {
-	gatewayNamespace, gatewayName, err := controllerutils.GetGatewayInfoFromConfigMap(ctx, k.client)
-	if err != nil {
-		// Fallback to default gateway values when ConfigMap is not available
-		gatewayNamespace = constants.DefaultGatewayNamespace
-		gatewayName = constants.DefaultGatewayName
-	}
-
 	var matchedServices []types.NamespacedName
-	listNamespace := metav1.NamespaceAll
 	continueToken := ""
 	for {
 		llmSvcList := &kservev1alpha1.LLMInferenceServiceList{}
-		if err := k.client.List(ctx, llmSvcList, &client.ListOptions{Namespace: listNamespace, Continue: continueToken}); err != nil {
+		if err := k.client.List(ctx, llmSvcList, &client.ListOptions{Namespace: metav1.NamespaceAll, Continue: continueToken}); err != nil {
 			return nil, err
 		}
 
 		for _, llmSvc := range llmSvcList.Items {
-			if k.isGatewayMatchedWithInfo(&llmSvc, authPolicy, gatewayNamespace, gatewayName) {
+			if controllerutils.LLMIsvcUsesGateway(ctx, k.client, &llmSvc, authPolicy.Namespace, string(authPolicy.Spec.TargetRef.Name)) {
 				matchedServices = append(matchedServices, types.NamespacedName{
 					Name:      llmSvc.Name,
 					Namespace: llmSvc.Namespace,
@@ -390,17 +395,4 @@ func (k *kserveAuthPolicyMatcher) FindLLMServiceFromGatewayAuthPolicy(ctx contex
 	}
 
 	return matchedServices, nil
-}
-
-func (k *kserveAuthPolicyMatcher) isGatewayMatchedWithInfo(llmSvc *kservev1alpha1.LLMInferenceService, authPolicy *kuadrantv1.AuthPolicy, gatewayNamespace, gatewayName string) bool {
-	if llmSvc.Spec.Router == nil || llmSvc.Spec.Router.Gateway == nil || !llmSvc.Spec.Router.Gateway.HasRefs() {
-		return authPolicy.Namespace == gatewayNamespace && string(authPolicy.Spec.TargetRef.Name) == gatewayName
-	}
-
-	for _, ref := range llmSvc.Spec.Router.Gateway.Refs {
-		if string(ref.Name) == string(authPolicy.Spec.TargetRef.Name) && string(ref.Namespace) == authPolicy.Namespace {
-			return true
-		}
-	}
-	return false
 }

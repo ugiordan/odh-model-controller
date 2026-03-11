@@ -283,7 +283,6 @@ func setupWebhooks(mgr ctrl.Manager, setupLog logr.Logger) error {
 		{"NIMAccount", webhooknimv1.SetupAccountWebhookWithManager},
 		{"InferenceService", webhookservingv1beta1.SetupInferenceServiceWebhookWithManager},
 		{"InferenceGraph", webhookservingv1alpha1.SetupInferenceGraphWebhookWithManager},
-		{"LLMInferenceService", webhookservingv1alpha1.SetupLLMInferenceServiceWebhookWithManager},
 	}
 
 	for _, webhookSetup := range webhookSetups {

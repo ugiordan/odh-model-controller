@@ -128,9 +128,6 @@ var _ = BeforeSuite(func() {
 	err = SetupInferenceGraphWebhookWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
-	err = SetupLLMInferenceServiceWebhookWithManager(mgr)
-	Expect(err).NotTo(HaveOccurred())
-
 	// +kubebuilder:scaffold:webhook
 
 	go func() {

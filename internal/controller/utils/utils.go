@@ -10,8 +10,7 @@ import (
 	"strings"
 
 	ocpconfigv1 "github.com/openshift/api/config/v1"
-
-	"knative.dev/pkg/kmeta"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/go-logr/logr"
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
@@ -352,16 +351,6 @@ func MergeUserLabelsAndAnnotations(desired, existing client.Object) {
 	}
 }
 
-// GetMaaSRoleName returns the name of the related Role resource for MaaS RBAC use cases
-func GetMaaSRoleName(llmisvc *kservev1alpha1.LLMInferenceService) string {
-	return kmeta.ChildName(llmisvc.Name, "-model-post-access")
-}
-
-// GetMaaSRoleBindingName returns the name of the related RoleBinding resource for MaaS RBAC use cases
-func GetMaaSRoleBindingName(llmisvc *kservev1alpha1.LLMInferenceService) string {
-	return kmeta.ChildName(llmisvc.Name, "-model-post-access-tier-binding")
-}
-
 func IsManagedByOdhController(obj client.Object) bool {
 	if labels := obj.GetLabels(); labels != nil {
 		return labels["app.kubernetes.io/managed-by"] == "odh-model-controller"
@@ -374,6 +363,20 @@ func IsExplicitlyUnmanaged(obj client.Object) bool {
 	if labels := obj.GetLabels(); labels != nil {
 		if managedValue, ok := labels["opendatahub.io/managed"]; ok {
 			return strings.EqualFold(strings.TrimSpace(managedValue), "false")
+		}
+	}
+	return false
+}
+
+// IsAuthorinoTLSBootstrapEnabled checks if the gateway has the authorino-tls-bootstrap annotation set to "true".
+// This allows EnvoyFilter creation for Authorino TLS even when the gateway is explicitly unmanaged.
+func IsAuthorinoTLSBootstrapEnabled(obj client.Object) bool {
+	if obj == nil {
+		return false
+	}
+	if annotations := obj.GetAnnotations(); annotations != nil {
+		if value, ok := annotations[constants.AuthorinoTLSBootstrapAnnotation]; ok {
+			return strings.EqualFold(strings.TrimSpace(value), "true")
 		}
 	}
 	return false
@@ -423,4 +426,10 @@ func ValidateInferenceServiceNameLength(isvc *kservev1beta1.InferenceService) er
 			})
 	}
 	return nil
+}
+
+// ShouldCreateEnvoyFilterForGateway returns true if EnvoyFilter should be created for the gateway.
+// This is true when the gateway is managed OR has the authorino-tls-bootstrap opt-in annotation.
+func ShouldCreateEnvoyFilterForGateway(gateway *gatewayapiv1.Gateway) bool {
+	return !IsExplicitlyUnmanaged(gateway) || IsAuthorinoTLSBootstrapEnabled(gateway)
 }

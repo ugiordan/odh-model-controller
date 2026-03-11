@@ -104,7 +104,18 @@ replacements:
       kind: ConfigMap
       version: v1
       name: odh-model-controller-parameters
-      fieldPath: data.vllm-spyre-x86-image
+      fieldPath: data.vllm-cpu-x86-image
+    targets:
+      - select:
+          kind: Template
+          name: vllm-cpu-x86-runtime-template
+        fieldPaths:
+          - objects.0.spec.containers.0.image
+  - source:
+      kind: ConfigMap
+      version: v1
+      name: odh-model-controller-parameters
+      fieldPath: data.vllm-spyre-image
     targets:
       - select:
           kind: Template
@@ -115,11 +126,22 @@ replacements:
       kind: ConfigMap
       version: v1
       name: odh-model-controller-parameters
-      fieldPath: data.vllm-spyre-s390x-image
+      fieldPath: data.vllm-spyre-image
     targets:
       - select:
           kind: Template
           name: vllm-spyre-s390x-runtime-template
+        fieldPaths:
+          - objects.0.spec.containers.0.image
+  - source:
+      kind: ConfigMap
+      version: v1
+      name: odh-model-controller-parameters
+      fieldPath: data.vllm-spyre-image
+    targets:
+      - select:
+          kind: Template
+          name: vllm-spyre-ppc64le-runtime-template
         fieldPaths:
           - objects.0.spec.containers.0.image
   - source:
@@ -166,17 +188,6 @@ replacements:
           name: odh-model-controller
         fieldPaths:
           - spec.template.spec.containers.[name=manager].env.[name=MODELREGISTRY_STATE].value
-  - source:
-      kind: ConfigMap
-      version: v1
-      name: odh-model-controller-parameters
-      fieldPath: data.maas-namespace
-    targets:
-      - select:
-          kind: Deployment
-          name: odh-model-controller
-        fieldPaths:
-          - spec.template.spec.containers.[name=manager].env.[name=MAAS_NAMESPACE].value
   - source:
       kind: ConfigMap
       version: v1

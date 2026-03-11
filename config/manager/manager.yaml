@@ -82,8 +82,6 @@ spec:
             value: replace
           - name: MODELREGISTRY_STATE
             value: replace
-          - name: MAAS_NAMESPACE
-            value: replace
         livenessProbe:
           httpGet:
             path: /healthz

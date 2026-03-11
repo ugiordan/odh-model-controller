@@ -30,7 +30,6 @@ import (
 	kuadrantv1beta1 "github.com/kuadrant/kuadrant-operator/api/v1beta1"
 	istioclientv1alpha3 "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/rbac/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -43,7 +42,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/opendatahub-io/odh-model-controller/internal/controller/constants"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/resources"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/serving/llm/reconcilers"
 	parentreconcilers "github.com/opendatahub-io/odh-model-controller/internal/controller/serving/reconcilers"
@@ -59,14 +60,8 @@ type LLMInferenceServiceReconciler struct {
 	envoyFilterMatcher     resources.EnvoyFilterMatcher
 }
 
-var ownedBySelfPredicate = predicate.NewPredicateFuncs(func(o client.Object) bool {
-	return o.GetLabels()["app.kubernetes.io/managed-by"] == "odh-model-controller"
-})
-
 func NewLLMInferenceServiceReconciler(client client.Client, scheme *runtime.Scheme, recorder record.EventRecorder) *LLMInferenceServiceReconciler {
 	subResourceReconcilers := []parentreconcilers.LLMSubResourceReconciler{
-		parentreconcilers.NewLLMRoleReconciler(client),
-		parentreconcilers.NewLLMRoleBindingReconciler(client),
 		reconcilers.NewKserveAuthPolicyReconciler(client, scheme),
 		reconcilers.NewKserveEnvoyFilterReconciler(client, scheme),
 	}
@@ -147,8 +142,6 @@ func (r *LLMInferenceServiceReconciler) Reconcile(ctx context.Context, req ctrl.
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=llminferenceserviceconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=kuadrant.io,resources=authpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kuadrant.io,resources=authpolicies/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.istio.io,resources=envoyfilters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways/finalizers,verbs=update;patch
@@ -156,12 +149,11 @@ func (r *LLMInferenceServiceReconciler) Reconcile(ctx context.Context, req ctrl.
 // +kubebuilder:rbac:groups=config.openshift.io,resources=authentications,verbs=get;list;watch
 // +kubebuilder:rbac:groups=kuadrant.io,resources=kuadrants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=operator.authorino.kuadrant.io,resources=authorinos,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 func (r *LLMInferenceServiceReconciler) SetupWithManager(mgr ctrl.Manager, setupLog logr.Logger) error {
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&kservev1alpha1.LLMInferenceService{}).
-		Owns(&v1.Role{}, ctrlbuilder.WithPredicates(ownedBySelfPredicate)).
-		Owns(&v1.RoleBinding{}, ctrlbuilder.WithPredicates(ownedBySelfPredicate)).
 		Named("llminferenceservice")
 
 	setupLog.Info("Setting up LLMInferenceService controller")
@@ -210,6 +202,34 @@ func (r *LLMInferenceServiceReconciler) SetupWithManager(mgr ctrl.Manager, setup
 				},
 				DeleteFunc: func(e event.DeleteEvent) bool {
 					return utils.IsManagedByOpenDataHub(e.Object)
+				},
+			}))
+	}
+
+	// Watch Gateway for managed label or authorino-tls-bootstrap annotation changes
+	if ok, err := utils.IsCrdAvailable(mgr.GetConfig(), gatewayapiv1.GroupVersion.String(), "Gateway"); err != nil {
+		setupLog.Error(err, "Failed to check CRD availability for Gateway")
+	} else if ok {
+		b = b.Watches(&gatewayapiv1.Gateway{},
+			r.enqueueOnGatewayChange(),
+			ctrlbuilder.WithPredicates(predicate.Funcs{
+				CreateFunc: func(e event.CreateEvent) bool {
+					return false
+				},
+				UpdateFunc: func(e event.UpdateEvent) bool {
+					// Check if managed label changed
+					oldManaged := e.ObjectOld.GetLabels()[constants.ODHManagedLabel]
+					newManaged := e.ObjectNew.GetLabels()[constants.ODHManagedLabel]
+					if oldManaged != newManaged {
+						return true
+					}
+					// Check if authorino-tls-bootstrap annotation changed
+					oldTLS := e.ObjectOld.GetAnnotations()[constants.AuthorinoTLSBootstrapAnnotation]
+					newTLS := e.ObjectNew.GetAnnotations()[constants.AuthorinoTLSBootstrapAnnotation]
+					return oldTLS != newTLS
+				},
+				DeleteFunc: func(e event.DeleteEvent) bool {
+					return false
 				},
 			}))
 	}
@@ -271,6 +291,43 @@ func (r *LLMInferenceServiceReconciler) enqueueOnEnvoyFilterChange() handler.Eve
 			return requests
 		}
 		return []reconcile.Request{}
+	})
+}
+
+func (r *LLMInferenceServiceReconciler) enqueueOnGatewayChange() handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, object client.Object) []reconcile.Request {
+		gateway := object.(*gatewayapiv1.Gateway)
+		logger := log.FromContext(ctx).WithValues("gateway", gateway.Name, "namespace", gateway.Namespace)
+
+		var requests []reconcile.Request
+		continueToken := ""
+
+		// Use pagination to handle large numbers of services efficiently
+		for {
+			llmSvcList := &kservev1alpha1.LLMInferenceServiceList{}
+			if err := r.Client.List(ctx, llmSvcList, &client.ListOptions{Continue: continueToken}); err != nil {
+				logger.Error(err, "Failed to list LLMInferenceService for gateway change")
+				return nil
+			}
+
+			for _, llmSvc := range llmSvcList.Items {
+				if utils.LLMIsvcUsesGateway(ctx, r.Client, &llmSvc, gateway.Namespace, gateway.Name) {
+					requests = append(requests, reconcile.Request{
+						NamespacedName: types.NamespacedName{
+							Name:      llmSvc.Name,
+							Namespace: llmSvc.Namespace,
+						},
+					})
+				}
+			}
+
+			if llmSvcList.Continue == "" {
+				break
+			}
+			continueToken = llmSvcList.Continue
+		}
+
+		return requests
 	})
 }
 
