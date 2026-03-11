@@ -37,6 +37,7 @@ import (
 
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/constants"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/utils"
+	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacscope"
 )
 
 const (
@@ -48,6 +49,7 @@ const (
 type SecretReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Scoper *rbacscope.RBACScoper
 }
 
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -236,6 +238,13 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	} else if err != nil {
 		logger.Error(err, "Unable to fetch the secret")
 		return ctrl.Result{}, err
+	}
+
+	if r.Scoper != nil && secret.GetUID() != "" {
+		if err := r.Scoper.EnsureAccess(ctx, secret); err != nil {
+			logger.Error(err, "Failed to ensure scoped RBAC access")
+			return ctrl.Result{}, err
+		}
 	}
 
 	err = r.ReconcileStorageSecret(secret, ctx)

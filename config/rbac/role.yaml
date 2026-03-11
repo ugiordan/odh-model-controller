@@ -5,21 +5,8 @@ kind: ClusterRole
 metadata:
   name: odh-model-controller-role
 rules:
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
-  - secrets
-  - serviceaccounts
-  - services
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+# NOTE: secrets, configmaps, services, serviceaccounts are now managed
+# dynamically per-namespace by operator-security-runtime/rbacscope
 - apiGroups:
   - ""
   resources:
@@ -226,6 +213,7 @@ rules:
   verbs:
   - create
   - delete
+  - escalate
   - get
   - list
   - patch

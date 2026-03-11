@@ -38,6 +38,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacscope"
 )
 
 const (
@@ -56,6 +58,7 @@ var controllerNamespace string
 type ServingRuntimeReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Scoper *rbacscope.RBACScoper
 }
 
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=servingruntimes,verbs=get;list;watch;create;update
@@ -248,6 +251,22 @@ func (r *ServingRuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	err := r.Client.Get(ctx, namespacedName, ns)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// Ensure scoped RBAC access before any namespace operations
+	if r.Scoper != nil {
+		sr := &servingv1alpha1.ServingRuntime{}
+		if getErr := r.Client.Get(ctx, req.NamespacedName, sr); getErr != nil {
+			if !apierrs.IsNotFound(getErr) {
+				return ctrl.Result{}, getErr
+			}
+			// NotFound is expected when triggered by watched sub-resources
+		} else {
+			if err := r.Scoper.EnsureAccess(ctx, sr); err != nil {
+				logger.Error(err, "Failed to ensure scoped RBAC access")
+				return ctrl.Result{}, err
+			}
+		}
 	}
 
 	if monitoringNs == "" {

@@ -35,6 +35,7 @@ import (
 
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/constants"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/utils"
+	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacscope"
 )
 
 const (
@@ -50,6 +51,7 @@ var caBundleConfigmaps = constants.CABundleConfigMaps()
 type ConfigMapReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Scoper *rbacscope.RBACScoper
 }
 
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete

@@ -51,6 +51,12 @@ import (
 	llmcontroller "github.com/opendatahub-io/odh-model-controller/internal/controller/serving/llm"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/utils"
 
+	"github.com/opendatahub-io/operator-security-runtime/pkg/impersonationguard"
+	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacaudit"
+	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacscope"
+	"github.com/opendatahub-io/operator-security-runtime/pkg/saprotection"
+	rbacv1 "k8s.io/api/rbac/v1"
+
 	webhookcorev1 "github.com/opendatahub-io/odh-model-controller/internal/webhook/core/v1"
 	webhooknimv1 "github.com/opendatahub-io/odh-model-controller/internal/webhook/nim/v1"
 	webhookservingv1alpha1 "github.com/opendatahub-io/odh-model-controller/internal/webhook/serving/v1alpha1"
@@ -135,7 +141,75 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := setupReconcilers(mgr, setupLog, cfg); err != nil {
+	// --- operator-security-runtime initialization ---
+	podNamespace := os.Getenv("POD_NAMESPACE")
+	if podNamespace == "" {
+		podNamespace = "opendatahub"
+	}
+
+	// rbacaudit: scan existing RBAC and log findings
+	findings := rbacaudit.AuditImpersonationExposure(context.Background(), mgr.GetAPIReader())
+	for _, f := range findings {
+		setupLog.Info("rbacaudit finding",
+			"severity", string(f.Severity),
+			"category", string(f.Category),
+			"resource", f.Resource,
+			"description", f.Description)
+	}
+
+	// impersonationguard: strip impersonate from system:aggregate-to-edit
+	if err := (&impersonationguard.ImpersonationGuardReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to setup impersonationguard")
+		os.Exit(1)
+	}
+
+	// saprotection: webhook to block SA hijacking (gated by ENABLE_WEBHOOKS)
+	if os.Getenv(enableWebhooksEnv) != "false" {
+		if err := saprotection.SetupPodWebhookWithManager(mgr, []saprotection.ProtectedIdentity{
+			{
+				Namespace:          podNamespace,
+				ServiceAccountName: "odh-model-controller",
+			},
+		}); err != nil {
+			setupLog.Error(err, "unable to setup saprotection webhook")
+			os.Exit(1)
+		}
+	}
+
+	// rbacscope: dynamic RBAC tied to resource lifecycle
+	allowedRules, err := rbacscope.NewAllowedRules(
+		rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"},
+			Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"configmaps"},
+			Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"services"},
+			Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"serviceaccounts"},
+			Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+	)
+	if err != nil {
+		setupLog.Error(err, "unable to create allowed rules")
+		os.Exit(1)
+	}
+	scoper, err := rbacscope.NewRBACScoper(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		rbacscope.OperatorIdentity{
+			Name:           "odh-model-controller",
+			ServiceAccount: "odh-model-controller",
+			Namespace:      podNamespace,
+		},
+		allowedRules,
+	)
+	if err != nil {
+		setupLog.Error(err, "unable to create RBACScoper")
+		os.Exit(1)
+	}
+
+	if err := setupReconcilers(mgr, setupLog, cfg, scoper); err != nil {
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
@@ -295,24 +369,24 @@ func setupWebhooks(mgr ctrl.Manager, setupLog logr.Logger) error {
 	return nil
 }
 
-func setupReconcilers(mgr ctrl.Manager, setupLog logr.Logger, cfg *rest.Config) error {
-	if err := setupInferenceServiceReconciler(mgr, cfg); err != nil {
+func setupReconcilers(mgr ctrl.Manager, setupLog logr.Logger, cfg *rest.Config, scoper *rbacscope.RBACScoper) error {
+	if err := setupInferenceServiceReconciler(mgr, cfg, scoper); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "InferenceService")
 		return err
 	}
-	if err := setupSecretReconciler(mgr); err != nil {
+	if err := setupSecretReconciler(mgr, scoper); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Secret")
 		return err
 	}
-	if err := setupConfigMapReconciler(mgr); err != nil {
+	if err := setupConfigMapReconciler(mgr, scoper); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigMap")
 		return err
 	}
-	if err := setupPodReconciler(mgr); err != nil {
+	if err := setupPodReconciler(mgr, scoper); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		return err
 	}
-	if err := setupServingRuntimeReconciler(mgr); err != nil {
+	if err := setupServingRuntimeReconciler(mgr, scoper); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ServingRuntime")
 		return err
 	}
@@ -324,7 +398,7 @@ func setupReconcilers(mgr ctrl.Manager, setupLog logr.Logger, cfg *rest.Config) 
 	return nil
 }
 
-func setupInferenceServiceReconciler(mgr ctrl.Manager, cfg *rest.Config) error {
+func setupInferenceServiceReconciler(mgr ctrl.Manager, cfg *rest.Config, scoper *rbacscope.RBACScoper) error {
 	enableMRInferenceServiceReconcile := false
 
 	mrState := os.Getenv("MODELREGISTRY_STATE")
@@ -339,34 +413,39 @@ func setupInferenceServiceReconciler(mgr ctrl.Manager, cfg *rest.Config) error {
 		mgr.GetAPIReader(),
 		enableMRInferenceServiceReconcile,
 		getEnvAsBool("MR_SKIP_TLS_VERIFY", false),
-		cfg.BearerToken)).SetupWithManager(mgr, setupLog)
+		cfg.BearerToken,
+		scoper)).SetupWithManager(mgr, setupLog)
 }
 
-func setupSecretReconciler(mgr ctrl.Manager) error {
+func setupSecretReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper) error {
 	return (&corecontroller.SecretReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Scoper: scoper,
 	}).SetupWithManager(mgr)
 }
 
-func setupConfigMapReconciler(mgr ctrl.Manager) error {
+func setupConfigMapReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper) error {
 	return (&corecontroller.ConfigMapReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Scoper: scoper,
 	}).SetupWithManager(mgr)
 }
 
-func setupPodReconciler(mgr ctrl.Manager) error {
+func setupPodReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper) error {
 	return (&corecontroller.PodReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Scoper: scoper,
 	}).SetupWithManager(mgr)
 }
 
-func setupServingRuntimeReconciler(mgr ctrl.Manager) error {
+func setupServingRuntimeReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper) error {
 	return (&servingcontroller.ServingRuntimeReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Scoper: scoper,
 	}).SetupWithManager(mgr)
 }
 

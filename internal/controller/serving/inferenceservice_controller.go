@@ -46,6 +46,7 @@ import (
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/constants"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/serving/reconcilers"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/utils"
+	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacscope"
 )
 
 // InferenceServiceReconciler reconciles a InferenceService object
@@ -59,9 +60,10 @@ type InferenceServiceReconciler struct {
 	ModelRegistryEnabled    bool
 	modelRegistrySkipTls    bool
 	kserveRawISVCReconciler *reconcilers.KserveRawInferenceServiceReconciler
+	scoper                  *rbacscope.RBACScoper
 }
 
-func NewInferenceServiceReconciler(setupLog logr.Logger, client client.Client, scheme *runtime.Scheme, clientReader client.Reader, modelRegistryReconcileEnabled, modelRegistrySkipTls bool, bearerToken string) *InferenceServiceReconciler {
+func NewInferenceServiceReconciler(setupLog logr.Logger, client client.Client, scheme *runtime.Scheme, clientReader client.Reader, modelRegistryReconcileEnabled, modelRegistrySkipTls bool, bearerToken string, scoper *rbacscope.RBACScoper) *InferenceServiceReconciler {
 	isvcReconciler := &InferenceServiceReconciler{
 		Client:                  client,
 		Scheme:                  scheme,
@@ -70,6 +72,7 @@ func NewInferenceServiceReconciler(setupLog logr.Logger, client client.Client, s
 		modelRegistrySkipTls:    modelRegistrySkipTls,
 		kserveRawISVCReconciler: reconcilers.NewKServeRawInferenceServiceReconciler(client),
 		bearerToken:             bearerToken,
+		scoper:                  scoper,
 	}
 
 	if modelRegistryReconcileEnabled {
@@ -139,6 +142,12 @@ func (r *InferenceServiceReconciler) ReconcileServing(ctx context.Context, req c
 		var deleteErrors *multierror.Error
 		logger.Info("InferenceService being deleted")
 		if controllerutil.ContainsFinalizer(isvc, constants.InferenceServiceODHFinalizerName) {
+			// Cleanup scoped RBAC for this owner
+			if r.scoper != nil {
+				if cleanupErr := r.scoper.CleanupAccess(ctx, isvc); cleanupErr != nil {
+					deleteErrors = multierror.Append(deleteErrors, cleanupErr)
+				}
+			}
 			err := r.onDeletion(ctx, logger, isvc)
 			if err != nil {
 				deleteErrors = multierror.Append(deleteErrors, err)
@@ -157,6 +166,14 @@ func (r *InferenceServiceReconciler) ReconcileServing(ctx context.Context, req c
 
 		}
 		return reconcile.Result{}, deleteErrors.ErrorOrNil()
+	}
+
+	// Ensure scoped RBAC access in this namespace
+	if r.scoper != nil {
+		if err := r.scoper.EnsureAccess(ctx, isvc); err != nil {
+			logger.Error(err, "Failed to ensure scoped RBAC access")
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Only RawDeployment mode is supported
