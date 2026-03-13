@@ -332,6 +332,7 @@ func (r *InferenceServiceReconciler) SetupWithManager(mgr ctrl.Manager, setupLog
 		}
 
 		watchHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+			logger := log.FromContext(ctx)
 			// Invalidate tracking for this namespace
 			if r.ScopeTracker != nil {
 				r.ScopeTracker.Invalidate(obj.GetNamespace())
@@ -339,6 +340,7 @@ func (r *InferenceServiceReconciler) SetupWithManager(mgr ctrl.Manager, setupLog
 			// Find InferenceServices in the affected namespace to trigger reconcile
 			isvcs := &kservev1beta1.InferenceServiceList{}
 			if err := r.Client.List(ctx, isvcs, client.InNamespace(obj.GetNamespace())); err != nil {
+				logger.Error(err, "Failed to list InferenceServices for drift recovery", "namespace", obj.GetNamespace())
 				return nil
 			}
 			requests := make([]reconcile.Request, 0, len(isvcs.Items))
