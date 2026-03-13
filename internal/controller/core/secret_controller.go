@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/constants"
+	rbaccontroller "github.com/opendatahub-io/odh-model-controller/internal/controller/rbac"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/utils"
 	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacscope"
 )
@@ -48,8 +49,9 @@ const (
 // known as StorageSecretReconciler
 type SecretReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Scoper *rbacscope.RBACScoper
+	Scheme       *runtime.Scheme
+	Scoper       *rbacscope.RBACScoper
+	ScopeTracker *rbaccontroller.ScopeTracker
 }
 
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -240,10 +242,13 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	if r.Scoper != nil && secret.GetUID() != "" {
+	if r.Scoper != nil && secret.GetUID() != "" && (r.ScopeTracker == nil || !r.ScopeTracker.IsProvisioned(secret.GetNamespace())) {
 		if err := r.Scoper.EnsureAccess(ctx, secret); err != nil {
 			logger.Error(err, "Failed to ensure scoped RBAC access")
 			return ctrl.Result{}, err
+		}
+		if r.ScopeTracker != nil {
+			r.ScopeTracker.MarkProvisioned(secret.GetNamespace())
 		}
 	}
 

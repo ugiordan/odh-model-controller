@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	rbaccontroller "github.com/opendatahub-io/odh-model-controller/internal/controller/rbac"
 	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacscope"
 )
 
@@ -57,8 +58,9 @@ var controllerNamespace string
 // known as MonitoringReconciler.
 type ServingRuntimeReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Scoper *rbacscope.RBACScoper
+	Scheme       *runtime.Scheme
+	Scoper       *rbacscope.RBACScoper
+	ScopeTracker *rbaccontroller.ScopeTracker
 }
 
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=servingruntimes,verbs=get;list;watch;create;update
@@ -254,7 +256,7 @@ func (r *ServingRuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Ensure scoped RBAC access before any namespace operations
-	if r.Scoper != nil {
+	if r.Scoper != nil && (r.ScopeTracker == nil || !r.ScopeTracker.IsProvisioned(req.Namespace)) {
 		sr := &servingv1alpha1.ServingRuntime{}
 		if getErr := r.Client.Get(ctx, req.NamespacedName, sr); getErr != nil {
 			if !apierrs.IsNotFound(getErr) {
@@ -265,6 +267,9 @@ func (r *ServingRuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			if err := r.Scoper.EnsureAccess(ctx, sr); err != nil {
 				logger.Error(err, "Failed to ensure scoped RBAC access")
 				return ctrl.Result{}, err
+			}
+			if r.ScopeTracker != nil {
+				r.ScopeTracker.MarkProvisioned(req.Namespace)
 			}
 		}
 	}

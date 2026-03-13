@@ -38,12 +38,15 @@ import (
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
 
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/constants"
+	rbaccontroller "github.com/opendatahub-io/odh-model-controller/internal/controller/rbac"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/serving/reconcilers"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/utils"
 	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacscope"
@@ -61,9 +64,10 @@ type InferenceServiceReconciler struct {
 	modelRegistrySkipTls    bool
 	kserveRawISVCReconciler *reconcilers.KserveRawInferenceServiceReconciler
 	scoper                  *rbacscope.RBACScoper
+	ScopeTracker            *rbaccontroller.ScopeTracker
 }
 
-func NewInferenceServiceReconciler(setupLog logr.Logger, client client.Client, scheme *runtime.Scheme, clientReader client.Reader, modelRegistryReconcileEnabled, modelRegistrySkipTls bool, bearerToken string, scoper *rbacscope.RBACScoper) *InferenceServiceReconciler {
+func NewInferenceServiceReconciler(setupLog logr.Logger, client client.Client, scheme *runtime.Scheme, clientReader client.Reader, modelRegistryReconcileEnabled, modelRegistrySkipTls bool, bearerToken string, scoper *rbacscope.RBACScoper, scopeTracker *rbaccontroller.ScopeTracker) *InferenceServiceReconciler {
 	isvcReconciler := &InferenceServiceReconciler{
 		Client:                  client,
 		Scheme:                  scheme,
@@ -73,6 +77,7 @@ func NewInferenceServiceReconciler(setupLog logr.Logger, client client.Client, s
 		kserveRawISVCReconciler: reconcilers.NewKServeRawInferenceServiceReconciler(client),
 		bearerToken:             bearerToken,
 		scoper:                  scoper,
+		ScopeTracker:            scopeTracker,
 	}
 
 	if modelRegistryReconcileEnabled {
@@ -169,10 +174,13 @@ func (r *InferenceServiceReconciler) ReconcileServing(ctx context.Context, req c
 	}
 
 	// Ensure scoped RBAC access in this namespace
-	if r.scoper != nil {
+	if r.scoper != nil && (r.ScopeTracker == nil || !r.ScopeTracker.IsProvisioned(isvc.GetNamespace())) {
 		if err := r.scoper.EnsureAccess(ctx, isvc); err != nil {
 			logger.Error(err, "Failed to ensure scoped RBAC access")
 			return ctrl.Result{}, err
+		}
+		if r.ScopeTracker != nil {
+			r.ScopeTracker.MarkProvisioned(isvc.GetNamespace())
 		}
 	}
 
@@ -296,6 +304,58 @@ func (r *InferenceServiceReconciler) SetupWithManager(mgr ctrl.Manager, setupLog
 			ctrlbuilder.MatchEveryOwner,
 			ctrlbuilder.WithPredicates(reconcilers.KedaLabelPredicate),
 		)
+	}
+
+	// Drift recovery watches on scoper-managed Roles and RoleBindings.
+	// When someone modifies or deletes a scoper-managed Role/RoleBinding,
+	// invalidate the tracker and re-reconcile affected InferenceServices.
+	if r.scoper != nil {
+		managedLabels := r.scoper.ManagedLabels()
+		isManagedByScoper := func(obj client.Object) bool {
+			objLabels := obj.GetLabels()
+			if objLabels == nil {
+				return false
+			}
+			for k, v := range managedLabels {
+				if objLabels[k] != v {
+					return false
+				}
+			}
+			return true
+		}
+
+		scopedRBACPredicate := predicate.Funcs{
+			CreateFunc:  func(e event.CreateEvent) bool { return false },
+			UpdateFunc:  func(e event.UpdateEvent) bool { return isManagedByScoper(e.ObjectNew) },
+			DeleteFunc:  func(e event.DeleteEvent) bool { return isManagedByScoper(e.Object) },
+			GenericFunc: func(e event.GenericEvent) bool { return false },
+		}
+
+		watchHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+			// Invalidate tracking for this namespace
+			if r.ScopeTracker != nil {
+				r.ScopeTracker.Invalidate(obj.GetNamespace())
+			}
+			// Find InferenceServices in the affected namespace to trigger reconcile
+			isvcs := &kservev1beta1.InferenceServiceList{}
+			if err := r.Client.List(ctx, isvcs, client.InNamespace(obj.GetNamespace())); err != nil {
+				return nil
+			}
+			requests := make([]reconcile.Request, 0, len(isvcs.Items))
+			for i := range isvcs.Items {
+				requests = append(requests, reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      isvcs.Items[i].Name,
+						Namespace: isvcs.Items[i].Namespace,
+					},
+				})
+			}
+			return requests
+		})
+
+		builder = builder.
+			Watches(&authv1.Role{}, watchHandler, ctrlbuilder.WithPredicates(scopedRBACPredicate)).
+			Watches(&authv1.RoleBinding{}, watchHandler, ctrlbuilder.WithPredicates(scopedRBACPredicate))
 	}
 
 	return builder.Complete(r)

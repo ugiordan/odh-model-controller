@@ -40,13 +40,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	rbaccontroller "github.com/opendatahub-io/odh-model-controller/internal/controller/rbac"
 	"github.com/opendatahub-io/operator-security-runtime/pkg/rbacscope"
 )
 
 type PodReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Scoper *rbacscope.RBACScoper
+	Scheme       *runtime.Scheme
+	Scoper       *rbacscope.RBACScoper
+	ScopeTracker *rbaccontroller.ScopeTracker
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -117,10 +119,13 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		return reconcile.Result{}, err
 	}
 
-	if r.Scoper != nil {
+	if r.Scoper != nil && (r.ScopeTracker == nil || !r.ScopeTracker.IsProvisioned(pod.GetNamespace())) {
 		if err := r.Scoper.EnsureAccess(ctx, pod); err != nil {
 			logger.Error(err, "Failed to ensure scoped RBAC access")
 			return reconcile.Result{}, err
+		}
+		if r.ScopeTracker != nil {
+			r.ScopeTracker.MarkProvisioned(pod.GetNamespace())
 		}
 	}
 

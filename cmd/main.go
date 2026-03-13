@@ -47,6 +47,7 @@ import (
 
 	corecontroller "github.com/opendatahub-io/odh-model-controller/internal/controller/core"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/nim"
+	rbaccontroller "github.com/opendatahub-io/odh-model-controller/internal/controller/rbac"
 	servingcontroller "github.com/opendatahub-io/odh-model-controller/internal/controller/serving"
 	llmcontroller "github.com/opendatahub-io/odh-model-controller/internal/controller/serving/llm"
 	"github.com/opendatahub-io/odh-model-controller/internal/controller/utils"
@@ -196,20 +197,22 @@ func main() {
 	}
 	scoper, err := rbacscope.NewRBACScoper(
 		mgr.GetClient(),
-		mgr.GetScheme(),
 		rbacscope.OperatorIdentity{
 			Name:           "odh-model-controller",
 			ServiceAccount: "odh-model-controller",
 			Namespace:      podNamespace,
 		},
 		allowedRules,
+		rbacscope.WithScheme(mgr.GetScheme()),
 	)
 	if err != nil {
 		setupLog.Error(err, "unable to create RBACScoper")
 		os.Exit(1)
 	}
 
-	if err := setupReconcilers(mgr, setupLog, cfg, scoper); err != nil {
+	scopeTracker := &rbaccontroller.ScopeTracker{}
+
+	if err := setupReconcilers(mgr, setupLog, cfg, scoper, scopeTracker); err != nil {
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
@@ -369,12 +372,12 @@ func setupWebhooks(mgr ctrl.Manager, setupLog logr.Logger) error {
 	return nil
 }
 
-func setupReconcilers(mgr ctrl.Manager, setupLog logr.Logger, cfg *rest.Config, scoper *rbacscope.RBACScoper) error {
-	if err := setupInferenceServiceReconciler(mgr, cfg, scoper); err != nil {
+func setupReconcilers(mgr ctrl.Manager, setupLog logr.Logger, cfg *rest.Config, scoper *rbacscope.RBACScoper, scopeTracker *rbaccontroller.ScopeTracker) error {
+	if err := setupInferenceServiceReconciler(mgr, cfg, scoper, scopeTracker); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "InferenceService")
 		return err
 	}
-	if err := setupSecretReconciler(mgr, scoper); err != nil {
+	if err := setupSecretReconciler(mgr, scoper, scopeTracker); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Secret")
 		return err
 	}
@@ -382,11 +385,11 @@ func setupReconcilers(mgr ctrl.Manager, setupLog logr.Logger, cfg *rest.Config, 
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigMap")
 		return err
 	}
-	if err := setupPodReconciler(mgr, scoper); err != nil {
+	if err := setupPodReconciler(mgr, scoper, scopeTracker); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		return err
 	}
-	if err := setupServingRuntimeReconciler(mgr, scoper); err != nil {
+	if err := setupServingRuntimeReconciler(mgr, scoper, scopeTracker); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ServingRuntime")
 		return err
 	}
@@ -398,7 +401,7 @@ func setupReconcilers(mgr ctrl.Manager, setupLog logr.Logger, cfg *rest.Config, 
 	return nil
 }
 
-func setupInferenceServiceReconciler(mgr ctrl.Manager, cfg *rest.Config, scoper *rbacscope.RBACScoper) error {
+func setupInferenceServiceReconciler(mgr ctrl.Manager, cfg *rest.Config, scoper *rbacscope.RBACScoper, scopeTracker *rbaccontroller.ScopeTracker) error {
 	enableMRInferenceServiceReconcile := false
 
 	mrState := os.Getenv("MODELREGISTRY_STATE")
@@ -414,14 +417,16 @@ func setupInferenceServiceReconciler(mgr ctrl.Manager, cfg *rest.Config, scoper 
 		enableMRInferenceServiceReconcile,
 		getEnvAsBool("MR_SKIP_TLS_VERIFY", false),
 		cfg.BearerToken,
-		scoper)).SetupWithManager(mgr, setupLog)
+		scoper,
+		scopeTracker)).SetupWithManager(mgr, setupLog)
 }
 
-func setupSecretReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper) error {
+func setupSecretReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper, scopeTracker *rbaccontroller.ScopeTracker) error {
 	return (&corecontroller.SecretReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Scoper: scoper,
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Scoper:       scoper,
+		ScopeTracker: scopeTracker,
 	}).SetupWithManager(mgr)
 }
 
@@ -433,19 +438,21 @@ func setupConfigMapReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper) er
 	}).SetupWithManager(mgr)
 }
 
-func setupPodReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper) error {
+func setupPodReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper, scopeTracker *rbaccontroller.ScopeTracker) error {
 	return (&corecontroller.PodReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Scoper: scoper,
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Scoper:       scoper,
+		ScopeTracker: scopeTracker,
 	}).SetupWithManager(mgr)
 }
 
-func setupServingRuntimeReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper) error {
+func setupServingRuntimeReconciler(mgr ctrl.Manager, scoper *rbacscope.RBACScoper, scopeTracker *rbaccontroller.ScopeTracker) error {
 	return (&servingcontroller.ServingRuntimeReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Scoper: scoper,
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Scoper:       scoper,
+		ScopeTracker: scopeTracker,
 	}).SetupWithManager(mgr)
 }
 

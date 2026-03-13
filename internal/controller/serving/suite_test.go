@@ -146,13 +146,13 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	scoper, err := rbacscope.NewRBACScoper(
 		mgr.GetClient(),
-		mgr.GetScheme(),
 		rbacscope.OperatorIdentity{
 			Name:           "odh-model-controller",
 			ServiceAccount: "odh-model-controller",
 			Namespace:      "default",
 		},
 		allowedRules,
+		rbacscope.WithScheme(mgr.GetScheme()),
 	)
 	Expect(err).NotTo(HaveOccurred())
 
@@ -165,6 +165,7 @@ var _ = BeforeSuite(func() {
 		false,
 		"",
 		scoper,
+		nil,
 	).SetupWithManager(mgr, ctrl.Log.WithName("setup"))
 	Expect(err).NotTo(HaveOccurred())
 
