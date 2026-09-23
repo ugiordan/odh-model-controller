@@ -1081,7 +1081,8 @@ func (r *GatewayReconciler) SetupWithManager(mgr ctrl.Manager, setupLog logr.Log
 				DeleteFunc: func(_ event.DeleteEvent) bool {
 					return false
 				},
-			})).
+			}),
+			ctrlbuilder.OnlyMetadata).
 		Named("gateway-auth-bootstrap").
 		Complete(r)
 }

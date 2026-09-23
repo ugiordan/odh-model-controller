@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -154,7 +155,7 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *ConfigMapReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Create a builder that only watch OpenDataHub global certificate ConfigMap
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.ConfigMap{}).
+		For(&corev1.ConfigMap{}, ctrlbuilder.OnlyMetadata).
 		Named("core-configmap").
 		WithEventFilter(reconcileOpenDataHubGlobalCACertConfigMap()).
 		Complete(r)

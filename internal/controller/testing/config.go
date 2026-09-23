@@ -31,6 +31,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 
 	"github.com/onsi/ginkgo/v2"
@@ -121,6 +122,13 @@ func (e *Config) Start(ctx context.Context) *Client {
 
 	mgrOptions := ctrl.Options{
 		Scheme: envTest.Scheme,
+		Client: client.Options{
+			Cache: &client.CacheOptions{
+				// ConfigMap watches use metadata-only objects. Keep typed reads
+				// direct so tests do not create a second structured cache.
+				DisableFor: []client.Object{&corev1.ConfigMap{}},
+			},
+		},
 		Metrics: metricsserver.Options{
 			BindAddress: "0",
 		},

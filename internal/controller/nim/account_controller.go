@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -84,7 +85,7 @@ func (r *AccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("odh-nim-controller").
 		For(&v1.Account{}).
-		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.ConfigMap{}, ctrlbuilder.OnlyMetadata).
 		Owns(&corev1.Secret{}).
 		Owns(&templatev1.Template{}).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(
@@ -112,7 +113,7 @@ func (r *AccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&item)})
 				}
 				return requests
-			})).
+			}), ctrlbuilder.OnlyMetadata).
 		Complete(r)
 }
 
